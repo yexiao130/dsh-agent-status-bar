@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Agent status bar",
+    "description": "Shows a click-through bar above the taskbar while another window covers DSH: during a step it shows what the agent is doing (writing a file, running a command, …) and the tail of its live reasoning; when an answer lands it shows that answer and the turn's elapsed time; it hides as soon as DSH is focused again. It follows only the main session, so subagent chatter never overwrites it. Bar height, font size, hold time, reasoning length and full-screen hiding are configurable. Windows only; the bar is drawn on the primary display's work area.",
+    "detail": "docs/DETAIL.md"
+  }
+}

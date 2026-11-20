@@ -1,0 +1,40 @@
+# Changelog
+
+All notable changes to this project are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
+adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.2.0] - 2026-11-20
+
+### Added
+
+- Live thought line: `agent/assistant-stream` `reasoning-delta` frames feed a
+  scrolling `思考中` line; `text-delta` frames feed `回答中`.
+- Action words per tool (`正在写入文件`, `正在执行命令`, `正在操作桌面`, …) via
+  name rules, replacing the generic placeholder during tool calls.
+- `maxReasoningChars` config key.
+- `test/selfcheck.mjs` plus `npm run selfcheck`: mounts the plugin against a
+  fake Context and fires malformed payloads.
+- Stability hardening: guarded listeners and activation, defensive payload
+  reads, clamped config values, overlay restart backoff (1.5 s → 60 s), 15 s
+  ready timeout, lock-file single instance, Host-pid watchdog, layout resync
+  on display/DPI changes, protocol version on the UDP channel, self-truncating
+  diagnostics.
+
+### Fixed
+
+- A tool-only step commits an `assistant/message` without visible text; the
+  reasoning buffer is now kept so the following tool call can display it.
+- `WS_EX_TOOLWINDOW` was written as `0x00800000`; the correct value is `0x80`.
+
+## [0.1.0] - 2026-11-20
+
+### Added
+
+- Initial release: a click-through bar above the taskbar that shows the main
+  agent's latest answer and its thinking time while another window covers DSH,
+  and hides as soon as DSH is focused again.
+- Only the main session is followed; subagent sessions are dropped after their
+  `subagent/descriptor` event.
+- Config keys: `enabled`, `barHeight`, `fontSize`, `doneHoldMs`, `maxChars`,
+  `hideOnFullscreen`.

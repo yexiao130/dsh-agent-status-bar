@@ -1,0 +1,21 @@
+# dsh-agent-status-bar —— 宿主行
+# DSH 窗口不在前台时，在任务栏上方显示一条细条，播报主智能体当前输出。
+# 这里的 config 是初始值：改完保存后重启 DSH 生效（插件会重新拉起悬浮条）。
+- insert:
+    - id: agent-status-bar
+      name: dsh-agent-status-bar
+      config:
+        # 总开关。false 时插件照常加载，但不启动悬浮条。
+        enabled: true
+        # 细条高度，单位 DIP（126% 缩放下 30 约等于 38 物理像素）。
+        barHeight: 30
+        # 正文与标签字号，单位 DIP。
+        fontSize: 12
+        # 一段输出完成后，细条继续停留的时长（毫秒），到时自动收起。
+        doneHoldMs: 8000
+        # 传给细条的文字上限（字符）。超出的部分在发送前就被截掉。
+        maxChars: 600
+        # 思考过程中在条上保留的思考文字长度（字符）。太长会把动作词挤掉。
+        maxReasoningChars: 160
+        # 前台是全屏应用（PPT 放映、视频、游戏）时是否自动隐藏。
+        hideOnFullscreen: true
