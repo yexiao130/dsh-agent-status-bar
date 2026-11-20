@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Documentation split into English `README.md` and Chinese `README.zh.md`,
+  cross-linked at the top of both.
+- Install command corrected to `dsh plugin --profile desktop add <spec>`: the
+  CLI forwards its arguments to pnpm, so `--profile` must precede the action.
+- Full-screen note refreshed: hiding is implemented behind `hideOnFullscreen`,
+  so the README now states the real limitation (self-drawn full-screen windows).
+
 ## [0.2.0] - 2026-11-20
 
 ### Added

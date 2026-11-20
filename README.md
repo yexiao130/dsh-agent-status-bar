@@ -1,11 +1,10 @@
 # dsh-agent-status-bar
 
+[简体中文](README.zh.md) | English
+
 A slim bar pinned just above the Windows taskbar that tells you what the main
 agent is doing while another window covers DeepSeek Harness — so you can watch
 progress without switching back.
-
-任务栏上方的一条细条：当 DSH 窗口被其他程序挡住时，播报主智能体最新输出的
-那段文字和已经思考的时间；切回 DSH 时自动隐藏。
 
 ## What you see
 
@@ -51,7 +50,7 @@ Newer DSH builds install a bundle by its package spec, so a tagged GitHub
 release is enough — no npm publish required:
 
 ```bash
-dsh plugin add github:yexiao130/dsh-agent-status-bar#v0.2.0 --profile desktop
+dsh plugin --profile desktop add github:yexiao130/dsh-agent-status-bar#v0.2.0
 ```
 
 After a restart, enable **Agent status bar** in **Plugins**, then start a turn
@@ -127,7 +126,8 @@ DSH upgrade.
 - Windows only (the overlay uses Win32 window styles and WPF).
 - The bar is drawn on the primary display's work area; multi-display follow is
   not implemented yet.
-- The bar is not hidden while a full-screen application runs.
+- Full-screen hiding relies on the foreground window covering its whole
+  monitor; a few self-drawn full-screen apps may not be detected.
 - Very long answers are truncated to 600 characters before being sent and then
   ellipsized to one line.
 - One overlay process per profile; disabling the plugin kills it.
