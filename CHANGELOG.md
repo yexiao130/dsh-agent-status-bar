@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Documentation split into English `README.md` and Chinese `README.zh.md`.
+- Install command corrected to `dsh plugin --profile desktop add <spec>`.
 ## [0.2.0] - 2026-11-20
 
 ### Added
