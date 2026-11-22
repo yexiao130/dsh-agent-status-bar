@@ -82,6 +82,20 @@ restart DSH).
 | `maxReasoningChars` | `160` | Reasoning characters kept on the bar while a step runs. |
 | `hideOnFullscreen` | `true` | Hide while a full-screen app owns the foreground. |
 
+## Hotkey
+
+A global hotkey hides and restores the bar at any time, even while another
+window is focused. The default is `Ctrl+Alt+H`.
+
+Change it in **Settings → Agent status bar** (the plugin adds its own section
+there): click **Record**, press the combination, then **Save**. The value lives
+in `~/.dsh/dsh-agent-status-bar.json`, so it survives reinstalling or upgrading
+the plugin.
+
+If another application already owns the combination, the settings page says so
+and the overlay keeps retrying quietly about every 10 seconds — the hotkey
+starts working as soon as the other app releases it.
+
 ## Stability
 
 DSH upgrades replace the Host and its internal event surface; this plugin only

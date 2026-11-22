@@ -1,16 +1,18 @@
 {
   "name": "dsh-agent-status-bar",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Shows what the main agent is doing on a slim bar above the taskbar while the DSH window is in the background.",
   "type": "module",
   "main": "index.js",
   "exports": {
     ".": "./index.js",
+    "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
   "files": [
     "index.js",
+    "client.js",
     "cordis.patch.yml",
     "overlay",
     "locale",
@@ -47,6 +49,13 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ],
+      "platform": "web"
     }
   }
 }

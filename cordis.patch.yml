@@ -1,6 +1,8 @@
 # dsh-agent-status-bar —— 宿主行
 # DSH 窗口不在前台时，在任务栏上方显示一条细条，播报主智能体当前输出。
 # 这里的 config 是初始值：改完保存后重启 DSH 生效（插件会重新拉起悬浮条）。
+# 隐藏/显示快捷键不在这里配：在「设置 → 智能体状态条」里改，
+# 值存在 ~/.dsh/dsh-agent-status-bar.json，升级或重装插件都不会丢。
 - insert:
     - id: agent-status-bar
       name: dsh-agent-status-bar

@@ -10,9 +10,9 @@
  * real foreground window.
  */
 import { spawn } from 'node:child_process'
-import { appendFileSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createSocket } from 'node:dgram'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -20,6 +20,11 @@ const here = dirname(fileURLToPath(import.meta.url))
 const overlayScript = join(here, 'overlay', 'statusbar.ps1')
 const HOST_LOG = join(tmpdir(), 'dsh-status-bar-host.log')
 const LOG_LIMIT_BYTES = 256 * 1024
+
+/** Settings the user edits from the DSH settings page. */
+const SETTINGS_DIR = join(homedir(), '.dsh')
+const SETTINGS_FILE = join(SETTINGS_DIR, 'dsh-agent-status-bar.json')
+const DEFAULT_HOTKEY = 'Ctrl+Alt+H'
 
 /** UDP message schema version, agreed with overlay/statusbar.ps1. */
 const PROTOCOL_VERSION = 1
@@ -173,6 +178,76 @@ function normalizeConfig(raw) {
   return config
 }
 
+/** Fixed modifier order for display; anything else is a parse failure. */
+const MODIFIER_ORDER = ['Ctrl', 'Alt', 'Shift', 'Win']
+
+/**
+ * Accept `Alt+Shift+K` style input and return a canonical `Ctrl+Alt+H`, or
+ * null when the combination cannot be a global hotkey.
+ */
+function normalizeHotkey(value) {
+  if (typeof value !== 'string') return null
+  const tokens = value.split('+').map((part) => part.trim()).filter(Boolean)
+  if (tokens.length < 2) return null
+  const mods = new Set()
+  let key = null
+  for (const token of tokens) {
+    const lower = token.toLowerCase()
+    if (lower === 'ctrl' || lower === 'control') {
+      mods.add('Ctrl')
+      continue
+    }
+    if (lower === 'alt') {
+      mods.add('Alt')
+      continue
+    }
+    if (lower === 'shift') {
+      mods.add('Shift')
+      continue
+    }
+    if (lower === 'win' || lower === 'meta') {
+      mods.add('Win')
+      continue
+    }
+    if (key !== null) return null
+    if (/^[a-z0-9]$/i.test(token)) {
+      key = token.toUpperCase()
+      continue
+    }
+    if (/^f([1-9]|1[0-2])$/i.test(token)) {
+      key = token.toUpperCase()
+      continue
+    }
+    return null
+  }
+  if (mods.size === 0 || key === null) return null
+  return [...MODIFIER_ORDER.filter((mod) => mods.has(mod)), key].join('+')
+}
+
+/** Load the settings file; a missing or broken file falls back to defaults. */
+function loadUserSettings() {
+  try {
+    if (!existsSync(SETTINGS_FILE)) return { hotkey: DEFAULT_HOTKEY }
+    const parsed = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8'))
+    return { hotkey: normalizeHotkey(parsed?.hotkey) ?? DEFAULT_HOTKEY }
+  } catch (error) {
+    diagnostics(`settings read failed: ${describeError(error)}`)
+    return { hotkey: DEFAULT_HOTKEY }
+  }
+}
+
+/** Persist the settings file; returns false instead of throwing. */
+function saveUserSettings(settings) {
+  try {
+    if (!existsSync(SETTINGS_DIR)) mkdirSync(SETTINGS_DIR, { recursive: true })
+    writeFileSync(SETTINGS_FILE, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
+    return true
+  } catch (error) {
+    diagnostics(`settings write failed: ${describeError(error)}`)
+    return false
+  }
+}
+
 /** Register a listener that can never throw into the Host event bus. */
 function safeOn(ctx, name, handler) {
   try {
@@ -204,6 +279,10 @@ export function apply(ctx, rawConfig) {
 
 function setup(ctx, rawConfig) {
   const config = normalizeConfig(rawConfig)
+  /** User-editable settings (settings page), separate from the patch config. */
+  const settings = loadUserSettings()
+  /** Last hotkey registration result reported by the overlay. */
+  let hotkeyState = 'unknown'
   const dshPid = Number(process.ppid) > 0 ? Number(process.ppid) : 0
   const logger = ctx.logger('agent-status-bar')
 
@@ -250,8 +329,18 @@ function setup(ctx, rawConfig) {
     }
   }
 
-  const publishThrottled = () => {
-    if (publishTimer) return
+  /** Tell a running overlay to re-register its global hotkey. */
+  const pushHotkey = (value) => {
+    try {
+      if (!socket || !port) return
+      const payload = Buffer.from(JSON.stringify({ type: 'hotkey', value }), 'utf8')
+      socket.send(payload, port, '127.0.0.1', () => {})
+    } catch (error) {
+      diagnostics(`hotkey push failed: ${describeError(error)}`)
+    }
+  }
+
+  const publishThrottled = () => {    if (publishTimer) return
     const wait = Math.max(0, 220 - (Date.now() - lastPublishAt))
     if (wait === 0) {
       publish()
@@ -337,6 +426,7 @@ function setup(ctx, rawConfig) {
       fontSize: config.fontSize,
       doneHoldMs: config.doneHoldMs,
       hideOnFullscreen: config.hideOnFullscreen,
+      hotkey: settings.hotkey,
     })
     diagnostics(`spawn overlay ${overlayScript}`)
     let proc
@@ -379,6 +469,12 @@ function setup(ctx, rawConfig) {
             }
             diagnostics(`overlay listening on ${port}`)
             publish()
+            continue
+          }
+          const hotkeyMatch = /^HOTKEY=([A-Z]+)$/.exec(line)
+          if (hotkeyMatch !== null) {
+            hotkeyState = hotkeyMatch[1].toLowerCase()
+            diagnostics(`hotkey state: ${hotkeyState}`)
           }
         }
       } catch (error) {
@@ -442,6 +538,114 @@ function setup(ctx, rawConfig) {
       diagnostics('plugin disposed')
     }
   })
+
+  // Settings page routes: read and change the hide/show hotkey.
+  if (typeof ctx.inject === 'function') {
+    try {
+      ctx.inject(['webServer'], (wctx) => {
+        if (!wctx || typeof wctx.webServer?.register !== 'function') return
+        wctx.effect(() => {
+          const reply = (res, status, payload) => {
+            try {
+              res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+              res.end(JSON.stringify(payload))
+            } catch (error) {
+              diagnostics(`route reply failed: ${describeError(error)}`)
+            }
+          }
+          const readBody = (req) =>
+            new Promise((resolve) => {
+              let raw = ''
+              req.on('data', (chunk) => {
+                raw += String(chunk)
+                if (raw.length > 64 * 1024) req.destroy()
+              })
+              req.on('end', () => {
+                try {
+                  resolve(JSON.parse(raw === '' ? '{}' : raw))
+                } catch {
+                  resolve(null)
+                }
+              })
+              req.on('error', () => resolve(null))
+            })
+          const statePayload = () => ({
+            hotkey: settings.hotkey,
+            hotkeyState,
+            overlayRunning: port > 0,
+            defaultHotkey: DEFAULT_HOTKEY,
+            settingsFile: SETTINGS_FILE,
+          })
+          const routes = [
+            {
+              kind: 'exact',
+              path: '/api/dsh-agent-status-bar/state',
+              handler: async (req, res) => {
+                if (req.method !== 'GET' && req.method !== 'HEAD') {
+                  reply(res, 405, { ok: false })
+                  return
+                }
+                reply(res, 200, statePayload())
+              },
+            },
+            {
+              kind: 'exact',
+              path: '/api/dsh-agent-status-bar/set',
+              handler: async (req, res) => {
+                if (req.method !== 'POST') {
+                  reply(res, 405, { ok: false })
+                  return
+                }
+                const body = await readBody(req)
+                if (body === null || typeof body !== 'object') {
+                  reply(res, 400, { ok: false, error: 'invalid-json' })
+                  return
+                }
+                if (body.hotkey === undefined) {
+                  reply(res, 400, { ok: false, error: 'missing-hotkey' })
+                  return
+                }
+                const normalized = normalizeHotkey(body.hotkey)
+                if (normalized === null) {
+                  reply(res, 400, { ok: false, error: 'invalid-hotkey' })
+                  return
+                }
+                settings.hotkey = normalized
+                if (!saveUserSettings(settings)) {
+                  reply(res, 500, { ok: false, error: 'save-failed' })
+                  return
+                }
+                hotkeyState = 'pending'
+                pushHotkey(normalized)
+                reply(res, 200, { ok: true, hotkey: normalized, hotkeyState })
+              },
+            },
+          ]
+          const disposers = routes.map((route) => {
+            try {
+              return wctx.webServer.register(route)
+            } catch (error) {
+              diagnostics(`route ${route.path} failed: ${describeError(error)}`)
+              return () => {}
+            }
+          })
+          return () => {
+            for (const dispose of disposers) {
+              try {
+                dispose?.()
+              } catch {
+                // Disposal is best effort.
+              }
+            }
+          }
+        }, 'status-bar-settings-routes')
+      })
+    } catch (error) {
+      diagnostics(`webServer injection failed: ${describeError(error)}`)
+    }
+  } else {
+    diagnostics('ctx.inject unavailable; settings page routes not registered')
+  }
 
   // Live reasoning and answer text arrive as transient stream frames.
   let streamFrames = 0

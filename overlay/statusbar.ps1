@@ -44,7 +44,7 @@ $script:PROTOCOL_VERSION = 1
 $script:PORT_RANGE = 47831..47840
 $script:BAR_HEIGHT = 30
 $script:DONE_HOLD_MS = 8000
-$script:CFG = @{ barHeight = 30; fontSize = 12; doneHoldMs = 8000; hideOnFullscreen = $true }
+$script:CFG = @{ barHeight = 30; fontSize = 12; doneHoldMs = 8000; hideOnFullscreen = $true; hotkey = 'Ctrl+Alt+H' }
 
 $state = [pscustomobject]@{ phase = 'idle'; label = ''; text = ''; since = 0; elapsed = 0 }
 $dshPid = 0
@@ -57,6 +57,10 @@ $script:foregroundFullscreen = $false
 $script:doneAt = 0
 $script:shown = $null
 $script:tickCount = 0
+$script:userHidden = $false
+$script:hwnd = [IntPtr]::Zero
+$script:hotkeyId = 0x5B12
+$script:hotkeyActive = $false
 
 Write-BarLog "boot pid=$PID hostPid=$($script:hostPid) dshPid=$dshPid"
 
@@ -68,6 +72,7 @@ if ($env:DSH_STATUS_BAR_CONFIG) {
     if ($parsed.fontSize) { $script:CFG.fontSize = [int]$parsed.fontSize }
     if ($parsed.doneHoldMs) { $script:CFG.doneHoldMs = [int]$parsed.doneHoldMs }
     if ($null -ne $parsed.hideOnFullscreen) { $script:CFG.hideOnFullscreen = [bool]$parsed.hideOnFullscreen }
+    if ($parsed.hotkey -is [string]) { $script:CFG.hotkey = $parsed.hotkey }
   } catch {
     Write-BarLog "config parse failed, using defaults: $($_.Exception.Message)"
   }
@@ -158,6 +163,8 @@ public static class StatusBarNative {
   [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr h, uint flags);
   [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr m, ref MONITORINFO info);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+  [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
   public static IntPtr GetExStyle(IntPtr h) { return GetWindowLongPtr(h, -20); }
   public static void SetExStyle(IntPtr h, IntPtr v) { SetWindowLongPtr(h, -20, v); }
@@ -270,6 +277,7 @@ try {
     try {
       $helper = New-Object System.Windows.Interop.WindowInteropHelper $window
       $hwnd = $helper.Handle
+      $script:hwnd = $hwnd
       $ex = [StatusBarNative]::GetExStyle($hwnd).ToInt64()
       # WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
       $ex = $ex -bor 0x20 -bor 0x08000000 -bor 0x00000080
@@ -289,6 +297,76 @@ try {
   [Console]::Error.WriteLine("window creation failed: $($_.Exception.Message)")
   Write-BarLog "window creation failed: $($_.Exception.Message)"
   exit 1
+}
+
+function Parse-Hotkey([string]$text) {
+  if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+  $mods = 0
+  $vk = 0
+  foreach ($raw in ($text -split '\+')) {
+    $part = $raw.Trim().ToLowerInvariant()
+    if ($part -eq '') { continue }
+    if ($part -eq 'ctrl' -or $part -eq 'control') { $mods = $mods -bor 0x2 }
+    elseif ($part -eq 'alt') { $mods = $mods -bor 0x1 }
+    elseif ($part -eq 'shift') { $mods = $mods -bor 0x4 }
+    elseif ($part -eq 'win' -or $part -eq 'meta') { $mods = $mods -bor 0x8 }
+    elseif ($part.Length -eq 1) {
+      $ch = [char]$part.ToUpperInvariant()[0]
+      if (($ch -ge [char]'A' -and $ch -le [char]'Z') -or ($ch -ge [char]'0' -and $ch -le [char]'9')) {
+        $vk = [int]$ch
+      }
+    } elseif ($part -match '^f([1-9]|1[0-2])$') {
+      $vk = 0x70 + ([int]$Matches[1] - 1)
+    }
+  }
+  if ($vk -le 0 -or $mods -eq 0) { return $null }
+  return [pscustomobject]@{ mods = [uint32]$mods; vk = [uint32]$vk }
+}
+
+function Unregister-UserHotkey {
+  if ($script:hwnd -ne [IntPtr]::Zero) {
+    try { [void][StatusBarNative]::UnregisterHotKey($script:hwnd, $script:hotkeyId) } catch { }
+  }
+  $script:hotkeyActive = $false
+}
+
+function Register-UserHotkey {
+  param([switch]$quiet)
+  Unregister-UserHotkey
+  if ($script:hwnd -eq [IntPtr]::Zero) {
+    if (-not $quiet) {
+      [Console]::Out.WriteLine('HOTKEY=NOWINDOW')
+      [Console]::Out.Flush()
+    }
+    return
+  }
+  $parsed = Parse-Hotkey $script:CFG.hotkey
+  if ($null -eq $parsed) {
+    $script:hotkeyActive = $false
+    if (-not $quiet) {
+      [Console]::Out.WriteLine('HOTKEY=INVALID')
+      [Console]::Out.Flush()
+      Write-BarLog "hotkey invalid: $($script:CFG.hotkey)"
+    }
+    return
+  }
+  $ok = $false
+  try { $ok = [StatusBarNative]::RegisterHotKey($script:hwnd, $script:hotkeyId, $parsed.mods, $parsed.vk) } catch { }
+  $script:hotkeyActive = $ok
+  if ($ok) {
+    [Console]::Out.WriteLine('HOTKEY=OK')
+    Write-BarLog "hotkey registered: $($script:CFG.hotkey)"
+  } elseif (-not $quiet) {
+    [Console]::Out.WriteLine('HOTKEY=FAIL')
+    Write-BarLog "hotkey register failed (taken by another app?): $($script:CFG.hotkey)"
+  }
+  [Console]::Out.Flush()
+}
+
+function Toggle-Hidden {
+  $script:userHidden = -not $script:userHidden
+  Write-BarLog "hotkey toggled: userHidden=$($script:userHidden)"
+  Apply-Visibility
 }
 
 function Format-Duration([double]$ms) {
@@ -336,7 +414,8 @@ function Sync-Layout() {
 
 function Apply-Visibility() {
   $visible = $true
-  if (-not $script:foregroundKnown) { $visible = $false }
+  if ($script:userHidden) { $visible = $false }
+  elseif (-not $script:foregroundKnown) { $visible = $false }
   elseif ($dshPid -eq 0) { $visible = $false }
   elseif ($script:foregroundPid -eq $dshPid) { $visible = $false }
   elseif ($script:foregroundFullscreen -and $script:CFG.hideOnFullscreen) { $visible = $false }
@@ -398,7 +477,14 @@ function Receive-Messages() {
     } catch {
       continue
     }
-    if ($null -eq $message -or $message.type -ne 'state') { continue }
+    if ($null -eq $message) { continue }
+    if ($message.type -eq 'hotkey') {
+      $script:CFG.hotkey = [string]$message.value
+      Write-BarLog "hotkey update received: $($script:CFG.hotkey)"
+      Register-UserHotkey
+      continue
+    }
+    if ($message.type -ne 'state') { continue }
     # A newer Host may speak a schema this build does not understand.
     if ($null -ne $message.v) {
       try { if ([int]$message.v -gt $script:PROTOCOL_VERSION) { continue } } catch { }
@@ -446,6 +532,27 @@ function Test-HostAlive() {
   }
 }
 
+# Register the global hide/show hotkey and listen for WM_HOTKEY on our window.
+try {
+  $source = [System.Windows.Interop.HwndSource]::FromHwnd($script:hwnd)
+  if ($null -ne $source) {
+    $source.AddHook([System.Windows.Interop.HwndSourceHook]{
+      param([IntPtr]$h, [int]$msg, [IntPtr]$wParam, [IntPtr]$lParam, [ref]$handled)
+      if ($msg -eq 0x0312) {
+        Toggle-Hidden
+        $handled.Value = $true
+      }
+      return [IntPtr]::Zero
+    })
+    Write-BarLog 'hotkey hook installed'
+  } else {
+    Write-BarLog 'hotkey hook unavailable: HwndSource.FromHwnd returned null'
+  }
+} catch {
+  Write-BarLog "hotkey hook failed: $($_.Exception.Message)"
+}
+Register-UserHotkey
+
 $ticker = New-Object System.Windows.Threading.DispatcherTimer
 $ticker.Interval = [TimeSpan]::FromMilliseconds(150)
 $ticker.Add_Tick({
@@ -463,6 +570,11 @@ $ticker.Add_Tick({
         $window.Close()
         [System.Windows.Threading.Dispatcher]::CurrentDispatcher.InvokeShutdown()
       }
+    }
+    # The hotkey may have been taken at startup and released later by the other
+    # app; retry quietly about every 10 seconds until it sticks.
+    if (($script:tickCount % 65) -eq 0 -and -not $script:hotkeyActive) {
+      Register-UserHotkey -quiet
     }
   } catch {
     Write-BarLog "tick error: $($_.Exception.Message)"

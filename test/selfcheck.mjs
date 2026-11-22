@@ -4,16 +4,18 @@
  * DSH's internal event surface may change between desktop releases. This
  * script mounts the plugin against a fake Context and fires payloads a future
  * release might produce, asserting that nothing throws and the state machine
- * keeps a sane phase.
+ * keeps a sane phase. It also mounts the fake `webServer` so the settings
+ * routes are exercised without a real Host.
  *
  * Run: node test/selfcheck.mjs
  */
 import { apply } from '../index.js'
 
 let failures = 0
-function check(name, fn) {
+
+async function check(name, fn) {
   try {
-    fn()
+    await fn()
     console.log(`ok   ${name}`)
   } catch (error) {
     failures += 1
@@ -25,6 +27,7 @@ function check(name, fn) {
  *  `enabled: false` is forced so a self-check never spawns a real overlay. */
 function mount(config = {}) {
   const handlers = new Map()
+  const routes = []
   const ctx = {
     logger: () => ({ warn() {}, info() {}, error() {} }),
     on: (name, handler) => {
@@ -33,6 +36,21 @@ function mount(config = {}) {
     effect: (factory) => {
       const dispose = factory()
       return () => dispose?.()
+    },
+    inject: (services, callback) => {
+      if (!Array.isArray(services) || !services.includes('webServer')) return
+      callback({
+        webServer: {
+          register: (route) => {
+            routes.push(route)
+            return () => {}
+          },
+        },
+        effect: (factory) => {
+          const dispose = factory()
+          return () => dispose?.()
+        },
+      })
     },
   }
   apply(ctx, { ...config, enabled: false })
@@ -43,18 +61,49 @@ function mount(config = {}) {
       handler(...args)
     },
     has: (name) => handlers.has(name),
+    routes,
+  }
+}
+
+function captureRes() {
+  return {
+    status: 0,
+    body: '',
+    writeHead(status) {
+      this.status = status
+    },
+    end(payload) {
+      this.body = payload ?? ''
+    },
+  }
+}
+
+function mockReq(method, body) {
+  const listeners = new Map()
+  return {
+    method,
+    url: '/',
+    on(event, callback) {
+      const list = listeners.get(event) ?? []
+      list.push(callback)
+      listeners.set(event, list)
+    },
+    flush() {
+      for (const callback of listeners.get('data') ?? []) callback(body ?? '')
+      for (const callback of listeners.get('end') ?? []) callback()
+    },
   }
 }
 
 const session = { id: 'session-test' }
 
-check('registers both listeners', () => {
+await check('registers both listeners', () => {
   const plugin = mount()
   if (!plugin.has('session/event')) throw new Error('session/event missing')
   if (!plugin.has('agent/assistant-stream')) throw new Error('assistant-stream missing')
 })
 
-check('survives null and undefined session events', () => {
+await check('survives null and undefined session events', () => {
   const plugin = mount()
   plugin.emit('session/event', undefined, undefined)
   plugin.emit('session/event', session, undefined)
@@ -64,7 +113,7 @@ check('survives null and undefined session events', () => {
   plugin.emit('session/event', session, { type: 'unknown/future-event', data: {} })
 })
 
-check('survives malformed assistant/message payloads', () => {
+await check('survives malformed assistant/message payloads', () => {
   const plugin = mount()
   plugin.emit('session/event', session, { type: 'assistant/message', data: undefined })
   plugin.emit('session/event', session, { type: 'assistant/message', data: { message: null } })
@@ -83,7 +132,7 @@ check('survives malformed assistant/message payloads', () => {
   })
 })
 
-check('survives malformed tool/call names', () => {
+await check('survives malformed tool/call names', () => {
   const plugin = mount()
   plugin.emit('session/event', session, { type: 'tool/call', data: undefined })
   plugin.emit('session/event', session, { type: 'tool/call', data: { name: null } })
@@ -91,7 +140,7 @@ check('survives malformed tool/call names', () => {
   plugin.emit('session/event', session, { type: 'tool/call', data: { name: 'ops_bash' } })
 })
 
-check('survives malformed assistant-stream frames', () => {
+await check('survives malformed assistant-stream frames', () => {
   const plugin = mount()
   plugin.emit('agent/assistant-stream', undefined)
   plugin.emit('agent/assistant-stream', {})
@@ -116,7 +165,7 @@ check('survives malformed assistant-stream frames', () => {
   })
 })
 
-check('ignores subagent sessions after their descriptor', () => {
+await check('ignores subagent sessions after their descriptor', () => {
   const plugin = mount()
   plugin.emit('session/event', session, { type: 'turn/start', data: {} })
   plugin.emit('session/event', { id: 'child' }, { type: 'subagent/descriptor', data: {} })
@@ -127,7 +176,7 @@ check('ignores subagent sessions after their descriptor', () => {
   plugin.emit('session/event', session, { type: 'turn/start', data: {} })
 })
 
-check('normalizes hostile config values', () => {
+await check('normalizes hostile config values', () => {
   const cases = [
     { barHeight: -5, fontSize: 999, doneHoldMs: 0, maxChars: -1, maxReasoningChars: 0 },
     { barHeight: 'abc', fontSize: null, doneHoldMs: NaN, maxChars: Infinity, maxReasoningChars: undefined },
@@ -143,7 +192,7 @@ check('normalizes hostile config values', () => {
   mount(42)
 })
 
-check('survives a Context whose logger throws', () => {
+await check('survives a Context whose logger throws', () => {
   const ctx = {
     logger: () => {
       throw new Error('logger unavailable')
@@ -154,6 +203,46 @@ check('survives a Context whose logger throws', () => {
     },
   }
   apply(ctx, {})
+})
+
+await check('registers the settings routes', async () => {
+  const plugin = mount()
+  if (plugin.routes.length !== 2) throw new Error(`expected 2 routes, got ${plugin.routes.length}`)
+  const state = plugin.routes.find((route) => route.path.endsWith('/state'))
+  const res = captureRes()
+  await state.handler({ method: 'GET', url: '/api/dsh-agent-status-bar/state' }, res)
+  const body = JSON.parse(res.body)
+  if (typeof body.hotkey !== 'string' || body.hotkey.length === 0) throw new Error('no hotkey in state')
+  if (typeof body.hotkeyState !== 'string') throw new Error('no hotkeyState in state')
+})
+
+await check('rejects an invalid hotkey and accepts a valid one', async () => {
+  const plugin = mount()
+  const set = plugin.routes.find((route) => route.path.endsWith('/set'))
+
+  const bad = mockReq('POST', JSON.stringify({ hotkey: 'H' }))
+  const badRes = captureRes()
+  const badPromise = set.handler(bad, badRes)
+  bad.flush()
+  await badPromise
+  const badBody = JSON.parse(badRes.body)
+  if (badRes.status !== 400 || badBody.error !== 'invalid-hotkey') {
+    throw new Error(`invalid hotkey not rejected: ${badRes.status} ${badRes.body}`)
+  }
+
+  const missing = mockReq('POST', JSON.stringify({}))
+  const missingRes = captureRes()
+  const missingPromise = set.handler(missing, missingRes)
+  missing.flush()
+  await missingPromise
+  if (missingRes.status !== 400) throw new Error('missing hotkey not rejected')
+
+  const broken = mockReq('POST', '{not json')
+  const brokenRes = captureRes()
+  const brokenPromise = set.handler(broken, brokenRes)
+  broken.flush()
+  await brokenPromise
+  if (brokenRes.status !== 400) throw new Error('broken json not rejected')
 })
 
 if (failures > 0) {

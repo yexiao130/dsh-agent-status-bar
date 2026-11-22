@@ -4,10 +4,27 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-11-22
+
+### Added
+
+- Global hide/show hotkey (default `Ctrl+Alt+H`), registered with
+  `RegisterHotKey` inside the overlay so it works while any window is focused.
+- Settings page section (`client.js`, `settings.section` slot) with a key
+  recorder: record or type a combination, save, and see the live registration
+  state.
+- Settings persisted in `~/.dsh/dsh-agent-status-bar.json`, independent of the
+  profile patch, so reinstalling or upgrading keeps the user's choice.
+- Host routes `GET /api/dsh-agent-status-bar/state` and
+  `POST /api/dsh-agent-status-bar/set`.
+- Hotkey conflict reporting: a taken combination surfaces as `hotkeyState: fail`
+  in the settings page, and the overlay retries quietly every ~10 s until the
+  other app releases it.
 
 ### Changed
 
+- `package.json` declares `dsh.client` and exports `./client`, and the version
+  moves to 0.3.0.
 - Documentation split into English `README.md` and Chinese `README.zh.md`,
   cross-linked at the top of both.
 - Install command corrected to `dsh plugin --profile desktop add <spec>`: the
