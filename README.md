@@ -13,8 +13,11 @@ progress without switching back.
 | Thinking | `思考中` followed by the tail of the live reasoning, plus a `12.4s` counter |
 | Calling a tool | The action (`正在写入文件`, `正在执行命令`, …) followed by the last reasoning line, plus the counter |
 | Waiting for your approval | `待确认` in red, with the counter |
-| Answer produced | The answer text, one line, ellipsized, plus `本轮 12.4s` |
+| Answer produced | The answer text, one line, ellipsized; the bar turns green with `✓ 已完成` and `本轮 12.4s` |
 | Idle, or DSH in the foreground | The bar hides itself |
+
+Left to right the bar reads: elapsed time, status dot, status label, answer or
+action text, and the current hide/show hotkey at the far right.
 
 The bar is click-through (`WS_EX_TRANSPARENT`), never takes focus, stays out of
 the taskbar and Alt+Tab, and follows the primary display's work area.

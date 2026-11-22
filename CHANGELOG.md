@@ -25,6 +25,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `package.json` declares `dsh.client` and exports `./client`, and the version
   moves to 0.3.0.
+- Bar layout: elapsed time now sits at the far left in a fixed-width slot (so
+  the rest never shifts as the number grows), and the current hide/show hotkey
+  is shown at the far right.
+- Completion state is louder: the whole bar turns green, the label gains a `✓`,
+  and the elapsed time reads at the left.
 - Documentation split into English `README.md` and Chinese `README.zh.md`,
   cross-linked at the top of both.
 - Install command corrected to `dsh plugin --profile desktop add <spec>`: the

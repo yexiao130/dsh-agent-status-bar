@@ -218,6 +218,8 @@ try {
 
   $panel = New-Object System.Windows.Controls.Grid
   $panel.Margin = [System.Windows.Thickness]::new(14, 0, 16, 0)
+  $c0 = New-Object System.Windows.Controls.ColumnDefinition
+  $c0.Width = [System.Windows.GridLength]::new(0, 'Auto')
   $c1 = New-Object System.Windows.Controls.ColumnDefinition
   $c1.Width = [System.Windows.GridLength]::new(10)
   $c2 = New-Object System.Windows.Controls.ColumnDefinition
@@ -226,10 +228,23 @@ try {
   $c3.Width = [System.Windows.GridLength]::new(1, 'Star')
   $c4 = New-Object System.Windows.Controls.ColumnDefinition
   $c4.Width = [System.Windows.GridLength]::new(0, 'Auto')
+  $panel.ColumnDefinitions.Add($c0)
   $panel.ColumnDefinitions.Add($c1)
   $panel.ColumnDefinitions.Add($c2)
   $panel.ColumnDefinitions.Add($c3)
   $panel.ColumnDefinitions.Add($c4)
+
+  # Leftmost: elapsed time. Fixed minimum width so the rest never shifts as
+  # the number grows from "5.6s" to "1m 05s".
+  $timerText = New-Object System.Windows.Controls.TextBlock
+  $timerText.Text = ''
+  $timerText.FontSize = $script:CFG.fontSize - 1
+  $timerText.FontFamily = New-Object System.Windows.Media.FontFamily('Consolas')
+  $timerText.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString('#9FB0C4')
+  $timerText.VerticalAlignment = 'Center'
+  $timerText.MinWidth = 54
+  $timerText.TextAlignment = 'Left'
+  [System.Windows.Controls.Grid]::SetColumn($timerText, 0)
 
   $dot = New-Object System.Windows.Shapes.Ellipse
   $dot.Width = 8
@@ -237,7 +252,7 @@ try {
   $dot.Fill = [System.Windows.Media.BrushConverter]::new().ConvertFromString('#4D8DFF')
   $dot.VerticalAlignment = 'Center'
   $dot.HorizontalAlignment = 'Left'
-  [System.Windows.Controls.Grid]::SetColumn($dot, 0)
+  [System.Windows.Controls.Grid]::SetColumn($dot, 1)
 
   $label = New-Object System.Windows.Controls.TextBlock
   $label.Text = ''
@@ -245,7 +260,7 @@ try {
   $label.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString('#8B98A8')
   $label.VerticalAlignment = 'Center'
   $label.Margin = [System.Windows.Thickness]::new(8, 0, 10, 0)
-  [System.Windows.Controls.Grid]::SetColumn($label, 1)
+  [System.Windows.Controls.Grid]::SetColumn($label, 2)
 
   $text = New-Object System.Windows.Controls.TextBlock
   $text.Text = ''
@@ -255,21 +270,23 @@ try {
   $text.VerticalAlignment = 'Center'
   $text.TextTrimming = 'CharacterEllipsis'
   $text.TextWrapping = 'NoWrap'
-  [System.Windows.Controls.Grid]::SetColumn($text, 2)
+  [System.Windows.Controls.Grid]::SetColumn($text, 3)
 
-  $timerText = New-Object System.Windows.Controls.TextBlock
-  $timerText.Text = ''
-  $timerText.FontSize = $script:CFG.fontSize - 1
-  $timerText.FontFamily = New-Object System.Windows.Media.FontFamily('Consolas')
-  $timerText.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString('#9FB0C4')
-  $timerText.VerticalAlignment = 'Center'
-  $timerText.Margin = [System.Windows.Thickness]::new(12, 0, 0, 0)
-  [System.Windows.Controls.Grid]::SetColumn($timerText, 3)
+  # Rightmost: the hide/show hotkey, so the binding is discoverable at a glance.
+  $hotkeyText = New-Object System.Windows.Controls.TextBlock
+  $hotkeyText.Text = $script:CFG.hotkey
+  $hotkeyText.FontSize = $script:CFG.fontSize - 2
+  $hotkeyText.FontFamily = New-Object System.Windows.Media.FontFamily('Consolas')
+  $hotkeyText.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString('#6B7A8C')
+  $hotkeyText.VerticalAlignment = 'Center'
+  $hotkeyText.Margin = [System.Windows.Thickness]::new(14, 0, 0, 0)
+  [System.Windows.Controls.Grid]::SetColumn($hotkeyText, 4)
 
+  $panel.Children.Add($timerText) | Out-Null
   $panel.Children.Add($dot) | Out-Null
   $panel.Children.Add($label) | Out-Null
   $panel.Children.Add($text) | Out-Null
-  $panel.Children.Add($timerText) | Out-Null
+  $panel.Children.Add($hotkeyText) | Out-Null
   $border.Child = $panel
   $window.Content = $border
 
@@ -440,6 +457,8 @@ function Update-Bar() {
   $phase = $state.phase
   $dotColor = '#4D8DFF'
   $bodyColor = '#C9D6E3'
+  $labelColor = '#8B98A8'
+  $barColor = '#F20D1117'
   $timerValue = ''
   $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 
@@ -454,15 +473,23 @@ function Update-Bar() {
     $bodyColor = '#FFB3AE'
     if ($state.since -gt 0) { $timerValue = Format-Duration ($now - $state.since) }
   } elseif ($phase -eq 'done') {
+    # Finished: green dot, green label with a tick, and a faint green bar so
+    # completion is obvious at a glance.
     $dotColor = '#3FB950'
+    $labelColor = '#3FB950'
+    $barColor = '#F2102418'
     if ($state.elapsed -gt 0) { $timerValue = Format-Duration $state.elapsed }
   }
 
   $label.Text = $state.label
+  if ($phase -eq 'done' -and $state.label) { $label.Text = ([char]0x2713) + ' ' + $state.label }
+  $label.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString($labelColor)
   $dot.Fill = [System.Windows.Media.BrushConverter]::new().ConvertFromString($dotColor)
   $text.Text = $state.text
   $text.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString($bodyColor)
   $timerText.Text = $timerValue
+  $border.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString($barColor)
+  $hotkeyText.Text = $script:CFG.hotkey
 }
 
 function Receive-Messages() {
